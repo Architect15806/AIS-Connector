@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent 连接 · AIS Connector</title><link rel="stylesheet" href="panel.css"><link rel="stylesheet" href="ssh.css"></head><body>
+<header><img class="mark" src="assets/icon-128.png" alt="AIS Connector"><div><h1>Agent 连接</h1><small>使用最新 SSH 指令连接服务器</small></div></header>
+<main>
+<section><h2>连接原理</h2><p>插件负责登录认证、建立隧道和定时检测，并将可用连接同步到本机 JSON 文件。文件的键是连接别名，值是当前 SSH 命令。隧道重建后端口可能变化，所以 Agent 每次建立新连接前都应重新读取文件。</p><p>Agent 必须与插件运行在同一台电脑；127.0.0.1 指向本机。连接失效或重连中时，文件中可能暂时没有该别名。更新文件不会自动恢复已中断的 SSH 会话。</p></section>
+<section><h2>1. 在插件中准备连接</h2><p>添加用户并登录认证，初始化目标连接，等待“SSH 验证通过”。</p><h2>2. 让 Agent 阅读项目内的 skill</h2><p>将以下文件路径发给 Agent，并告诉它要连接的完整别名。也可以按照所用 Agent 工具的规则安装该 skill；此页面不会自动安装。</p><div class="ssh-line"><code id="skillFile">正在获取项目路径…</code><button class="copy-button" id="copySkill" title="复制 skill 路径" aria-label="复制 skill 路径" disabled>⧉</button></div><p class="hint">项目相对路径：skills/ais-connector/SKILL.md</p><h2>3. 每次读取最新命令</h2><p>Agent 先读取 JSON，按别名选择连接，再用 SSH 执行只读检测。失败后重新读取并重试一次；仍失败则提醒你更新登录状态，不自行重建插件的隧道。</p></section>
+<section><h2>本机 Agent 连接文件</h2><div class="ssh-line"><code id="agentFile">正在获取本机路径…</code><button class="copy-button" id="copyAgent" title="复制 JSON 路径" aria-label="复制 JSON 路径" disabled>⧉</button></div><p class="hint">由本地宿主按当前操作系统和用户目录生成，不包含固定用户名。文件会自动更新，请勿手工修改。</p><button id="reloadInfo" class="quiet">重新读取路径</button></section>
+<aside id="pageMessage" role="status"></aside>
+</main><script src="agent.js"></script></body></html>

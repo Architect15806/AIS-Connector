@@ -1,0 +1,13 @@
+__pycache__/
+.personal/
+.personal
+personal-data/
+*.py[cod]
+.env
+.env.*
+*.log
+.DS_Store
+Thumbs.db
+native-host/launch.cmd
+native-host/launch.sh
+native-host/com.ais.connector.json

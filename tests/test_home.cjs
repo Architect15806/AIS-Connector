@@ -1,0 +1,15 @@
+const vm=require('node:vm'),fs=require('node:fs'),assert=require('node:assert/strict');
+const elements=new Map();
+const get=id=>{if(!elements.has(id))elements.set(id,{});return elements.get(id);};
+const context=vm.createContext({document:{getElementById:get},Error,Number,String});
+let source=fs.readFileSync('extension/home.js','utf8');
+source=source.slice(0,source.lastIndexOf("$('target').onchange"));
+vm.runInContext(source,context);
+const command=vm.runInContext("commands('203.0.113.8',12,'10.2.0.1')",context);
+assert(command.add.includes("-DestinationPrefix '203.0.113.8/32' -InterfaceIndex 12 -NextHop '10.2.0.1'"));
+assert(command.add.includes('-PolicyStore ActiveStore'));
+assert(command.add.includes('A different host route already exists'));
+assert(command.undo.endsWith('-Confirm'));
+assert.throws(()=>vm.runInContext("commands('1.2.3.4; exit',12,'10.2.0.1')",context));
+assert.throws(()=>vm.runInContext("commands('203.0.113.8',0,'10.2.0.1')",context));
+console.log('Home command generation and validation tests passed.');

@@ -1,0 +1,4 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>日志 · AIS Connector</title><link rel="stylesheet" href="panel.css"><link rel="stylesheet" href="ssh.css"></head><body>
+<header><img class="mark" src="assets/icon-128.png" alt="AIS Connector"><div><h1>排错日志</h1><small>操作记录与后台连接状态</small></div></header>
+<main><section><div class="heading"><h2>最近日志</h2><div class="row"><button id="reloadLogs">刷新</button><button id="copyLogs" class="quiet" disabled>复制日志</button></div></div><p class="hint">每 5 秒更新，最多保留 2000 条，此页显示最新 200 条。仅用于排错，不记录 Token 或完整请求；日志仍可能含用户名、实例和网络地址，分享前请检查。</p><p class="hint">运行中的旧版后台不会产生完整事件日志；本页读取时会补充当前状态快照。若需要完整后续检测记录，可在方便时断开并重新初始化连接。</p><code id="logPath"></code></section><aside id="pageMessage" role="status"></aside><div id="logEntries" class="log-entries"></div></main><script src="logs.js"></script></body></html>

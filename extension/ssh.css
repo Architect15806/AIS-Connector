@@ -1,0 +1,49 @@
+.ssh-line{display:flex;align-items:center;gap:6px;background:#eef3ef;border-radius:8px;margin-top:10px;padding-right:5px}.ssh-line code{flex:1;min-width:0;background:none}.copy-button{display:grid;place-items:center;flex-shrink:0;width:32px;height:32px;padding:5px;background:transparent;color:#52695a}.copy-button:hover{background:#dce8df}
+.ssh-line code{max-height:180px;overflow:auto}
+[hidden]{display:none!important}
+[class="mark"]{object-fit:contain;background:transparent}
+.user-selector{display:flex;align-items:center;gap:10px}.user-selector select{flex:1;min-width:0}.user-selector button{flex:none;font-size:23px;padding:3px 13px}.current-user{margin-top:16px;font-size:16px}.settings-button{margin-top:20px;width:100%}
+.service-actions{margin-left:auto;display:flex;align-items:flex-end;flex-direction:column;gap:6px;flex-shrink:0}.service-actions .badge{margin:0}.service-actions button{padding:6px 10px}.countdown-button{position:relative}.countdown-border{position:absolute;inset:-3px;width:calc(100% + 6px);height:calc(100% + 6px);overflow:visible;pointer-events:none}.countdown-border rect{fill:none;stroke:#91caa6;stroke-width:2.5;vector-effect:non-scaling-stroke}.countdown-button:disabled .countdown-border{opacity:.35}
+.connection-name-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px}.connection-name-row h3{margin:0;min-width:0;overflow-wrap:anywhere}.connection-name-row button{flex-shrink:0;padding:5px 9px;white-space:nowrap}
+
+.connection-heading-actions{display:flex;align-items:center;gap:6px}
+.connection-heading-actions #addConnection{font-size:23px;padding:2px 12px}
+.connection-name-row{align-items:flex-start}
+.connection-name-row .connection-title{flex:0 1 auto;min-width:0;white-space:normal;overflow-wrap:anywhere;text-align:left;font-size:14px;font-weight:650}
+.namespace-actions{position:relative;flex:none;margin-left:auto}
+.namespace-toggle{font-family:ui-monospace,monospace}
+.namespace-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:5;min-width:148px;padding:5px;background:white;border:1px solid #dce5dd;border-radius:10px;box-shadow:0 5px 20px #17382922}
+.namespace-menu button{display:block;width:100%;text-align:left;background:white;padding:8px 10px}
+.namespace-menu button:hover{background:#eef3ef}
+.connection-meta{margin:3px 0;line-height:1.4}
+.current-user{margin:0 0 12px}
+.user-selector{gap:6px;flex-wrap:nowrap}
+.user-selector select{flex:1 1 0;width:0;min-width:0;height:40px;padding:7px 8px}
+.user-selector button{flex:0 0 auto;height:40px;padding:7px 12px;font-size:12px;white-space:nowrap}
+.user-selector .user-icon{display:grid;place-items:center;width:34px;padding:0}
+.user-selector #addUser{font-size:23px;line-height:1;padding:0;display:flex;align-items:center;justify-content:center}
+.connection-name-row .connection-fold{flex:none;margin-left:0;padding:3px 8px;font-size:18px;line-height:1.5}
+.connection-fold{transition:transform 240ms ease}
+.connection-card.collapsed .connection-fold{transform:rotate(-90deg)}
+.connection-reveal{display:grid;grid-template-rows:1fr;opacity:1;transition:grid-template-rows 240ms ease,opacity 180ms ease}
+.connection-card.collapsed .connection-reveal{grid-template-rows:0fr;opacity:0}
+.connection-body{min-height:0;overflow:hidden}
+.connection-body:before{content:"";display:block;height:7px}
+.connection-card .namespace-actions{transition:opacity 180ms ease,visibility 180ms ease}
+.connection-card.collapsed .namespace-actions{opacity:0;visibility:hidden;pointer-events:none}
+.user-selector select,.user-selector button{height:32px;padding-top:3px;padding-bottom:3px}
+.connection-name-row{align-items:stretch}
+.connection-name-row .connection-title{min-height:32px;display:flex;align-items:center}
+.connection-name-row .namespace-actions{display:flex;align-items:stretch}
+.connection-name-row .namespace-toggle{height:100%;min-height:32px}
+.connection-name-row .connection-fold{min-height:32px}
+.connection-body .row button{min-height:30px;padding:4px 10px;line-height:22px}
+.connection-heading-actions button{height:32px;display:flex;align-items:center;justify-content:center;padding:4px 10px}
+.connection-heading-actions #toggleAll{font-size:20px;width:32px;padding:0}
+.connection-heading-actions #addConnection{width:32px;padding:0}
+html{overflow-y:scroll;scrollbar-gutter:stable}
+body,main,section,.connection-card{min-width:0}
+@media(prefers-reduced-motion:reduce){.connection-reveal,.connection-fold,.connection-card .namespace-actions{transition:none}}
+.state + .connection-meta{margin-top:7px}
+
+.bottom-actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:20px;align-items:center;text-align:center}.bottom-actions button{width:100%;padding:10px 4px}.log-entries{margin-top:16px}.log-entries section{padding:12px}.log-entries code{max-height:260px;overflow:auto}.log-error{font-size:12px;color:#934f39}
