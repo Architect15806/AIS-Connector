@@ -2,7 +2,96 @@ const $ = id => document.getElementById(id);
 let data, states = {}, editing, busy = false;
 let pendingConnection = null;
 let openNamespaceId = null;
+let draggedConnectionId = null;
+async function reorderConnection(sourceId, targetId, after=false){
+  if(busy||sourceId===targetId)return;
+  const previous=data.connections.slice();
+  const source=previous.find(c=>c.id===sourceId);
+  if(!source||!previous.some(c=>c.id===targetId))return;
+  await perform(async()=>{
+    const next=previous.filter(c=>c.id!==sourceId);
+    next.splice(next.findIndex(c=>c.id===targetId)+(after?1:0),0,source);
+    data.connections=next;
+    try{await rpc({action:'profile_save',profile:data});}
+    catch(error){data.connections=previous;throw error;}
+    await syncAgentFile();
+    message('连接顺序已保存。');
+  });
+}
+function attachConnectionDrag(card, row, connection){
+  const handle=document.createElement('button');
+  handle.type='button';handle.className='quiet connection-drag';handle.textContent='⠿';
+  handle.title='拖拽排序；也可按 Alt + 上下方向键移动';
+  handle.setAttribute('aria-label','调整连接顺序：'+connection.alias);
+  handle.draggable=!busy;handle.disabled=busy;
+  handle.ondragstart=e=>{
+    if(busy){e.preventDefault();return;}
+    draggedConnectionId=connection.id;
+    e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',connection.id);
+    card.dataset.dragging='true';
+  };
+  const clear=()=>{for(const el of document.querySelectorAll('.connection-card')){delete el.dataset.dropPosition;delete el.dataset.dragging;}};
+  handle.ondragend=()=>{draggedConnectionId=null;clear();render();};
+  card.ondragover=e=>{
+    if(!draggedConnectionId||draggedConnectionId===connection.id||busy)return;
+    e.preventDefault();clear();e.dataTransfer.dropEffect='move';
+    const rect=card.getBoundingClientRect();
+    card.dataset.dropPosition=e.clientY>rect.top+rect.height/2?'after':'before';
+  };
+  card.ondragleave=e=>{if(!card.contains(e.relatedTarget))delete card.dataset.dropPosition;};
+  card.ondrop=e=>{
+    if(!draggedConnectionId)return;
+    e.preventDefault();const source=draggedConnectionId,after=card.dataset.dropPosition==='after';
+    draggedConnectionId=null;clear();void reorderConnection(source,connection.id,after);
+  };
+  handle.onkeydown=e=>{
+    if(!e.altKey||!['ArrowUp','ArrowDown'].includes(e.key))return;
+    e.preventDefault();const down=e.key==='ArrowDown';
+    const target=data.connections[data.connections.findIndex(c=>c.id===connection.id)+(down?1:-1)];
+    if(target)void reorderConnection(connection.id,target.id,down);
+  };
+  row.append(handle);
+}
 const expandedConnections = new Set();
+const expandedGPU = new Set();
+function gpuPanel(connection,state){
+  const panel=document.createElement('div');panel.className='gpu-panel';
+  const summary=document.createElement('button');summary.className='gpu-summary';summary.type='button';
+  const reveal=document.createElement('div');reveal.className='gpu-reveal';reveal.id='gpu-details-'+connection.id;
+  const content=document.createElement('div');content.className='gpu-content';reveal.append(content);
+  const applyOpen=()=>{const open=expandedGPU.has(connection.id);panel.dataset.expanded=String(open);summary.setAttribute('aria-expanded',String(open));content.inert=!open;};
+  summary.setAttribute('aria-controls',reveal.id);applyOpen();
+  summary.onclick=()=>{
+    if(expandedGPU.has(connection.id))expandedGPU.delete(connection.id);else expandedGPU.add(connection.id);
+    applyOpen();
+    clearTimeout(foldAnimationTimer);
+    foldAnimationTimer=setTimeout(()=>{foldAnimationTimer=null;if(renderAfterFold){renderAfterFold=false;render();}},300);
+  };
+  const scan=state.gpu,cards=scan?.cards||[];
+  const counts={idle:0,spinning:0,busy:0,unknown:0};for(const card of cards)counts[card.status in counts?card.status:'unknown']++;
+  summary.textContent=cards.length?`${counts.idle}卡空闲，${counts.spinning}卡空转，${counts.busy}卡占用${counts.unknown?`，${counts.unknown}卡未知`:''}`:scan?.error||'显卡状态：等待首次扫描';
+  panel.append(summary);
+  const note=document.createElement('p');note.className='hint';note.textContent=(scan?.updated_at?`扫描时间：${beijingTime(scan.updated_at*1000)}。`:'')+(state.status!=='connected'?' 当前连接未就绪，已有结果仅供参考。':'');const scanRow=document.createElement('div');scanRow.className='gpu-scan-row';
+  const watch=button('注视',()=>perform(async()=>{
+    await rpc({action:'gpu_watch',id:connection.id,enabled:!state.gpu_watching});
+    message(state.gpu_watching?'已关闭注视。':'已开启注视，每 2 秒扫描显卡；扫描较慢时不会并发堆积。');
+    await refresh();
+  }),!state.gpu_watching);
+  watch.className=state.gpu_watching?'gpu-watch watching':'quiet gpu-watch';
+  watch.setAttribute('aria-pressed',String(Boolean(state.gpu_watching)));
+  watch.disabled=busy||(!state.gpu_watching&&state.status!=='connected');
+  if(state.gpu_watching){attachCountdown(watch,connection.id,state);watch.dataset.gpuWatch='true';}
+  scanRow.append(note,watch);content.append(scanRow);
+  for(const card of cards){
+    const item=document.createElement('div');item.className='gpu-card';
+    const model=String(card.name||'未知').replace(/^NVIDIA\s+/i,'');
+    const mem=Number.isFinite(card.memory_used)&&Number.isFinite(card.memory_total)&&card.memory_total>0?Math.round(card.memory_used/card.memory_total*100)+'%':'未知';
+    item.textContent=`${card.index}：${model}  Mem ${mem}  Util ${card.utilization==null?'未知':card.utilization+'%'}`;
+    content.append(item);
+  }
+  panel.append(reveal);
+  return panel;
+}
 let foldAnimationTimer = null, renderAfterFold = false;
 let editingConnectionId = null;
 let intervalSeconds = 300;
@@ -28,6 +117,12 @@ function animateCountdown(){
   const now=Date.now()/1000;
   for(const button of document.querySelectorAll('.countdown-button')){
     const id=button.dataset.connectionId,s=states[id]||{};let reset=countdownResets.get(id);
+    if(button.dataset.gpuWatch){
+      const remaining=s.gpu_next_check_at?Math.max(0,s.gpu_next_check_at-now):0;
+      button.querySelector('rect').setAttribute('stroke-dasharray',`${Math.min(1,remaining/2)*100} 100`);
+      button.title=s.gpu_scan_running?'正在扫描显卡…':`下次显卡扫描：${Math.ceil(remaining)} 秒`;
+      continue;
+    }
     if(reset&&s.countdown_started_at>=reset){countdownResets.delete(id);reset=null;}
     const duration=reset?intervalSeconds:(s.interval_seconds||intervalSeconds);
     const end=reset?reset+duration:s.next_check_at;
@@ -98,6 +193,7 @@ $('toggleAll').onclick=()=>{
   updateFoldAll();
 };
 function render(){
+  if(draggedConnectionId)return;
   if(foldAnimationTimer!==null){renderAfterFold=true;return;}
   updateFoldAll();
   $('refreshAll').disabled=busy||!data.connections.some(c=>active(states[c.id]?.status));
@@ -111,6 +207,7 @@ function render(){
   if(!connections.length){const p=document.createElement('p');p.className='hint';p.textContent='添加一个实例，随时开启工作通道。';$('connections').append(p);}
   for(const c of connections){const s=states[c.id]||{};const a=document.createElement('article');const collapsed=!expandedConnections.has(c.id);a.className=collapsed?'connection-card collapsed':'connection-card';const body=document.createElement('div');body.className='connection-body';body.id='connection-body-'+c.id;body.inert=collapsed;const reveal=document.createElement('div');reveal.className='connection-reveal';reveal.append(body);const st=document.createElement('div');st.className='state';st.textContent=({connected:'● 已连接 · SSH 验证通过',connecting:'◌ 正在建立通道…',checking:'◌ 正在验证 SSH…',degraded:'⚠ SSH 不可用',error:'连接失败',stopped:'未连接'})[s.status]||'未连接';
     const nameRow=document.createElement('div');nameRow.className='connection-name-row';
+    attachConnectionDrag(a,nameRow,c);
     const copyName=button(c.alias,()=>copyText(c.alias),true);
     copyName.classList.add('connection-title');copyName.disabled=false;copyName.title='点击复制连接名称';
     const actions=document.createElement('div');actions.className='namespace-actions';
@@ -148,7 +245,7 @@ function render(){
     const check=button('刷新状态',()=>perform(async()=>{resetCountdown(c.id);try{await rpc({action:'check',id:c.id});pendingConnection=c.id;message('已请求实时 SSH 检测。');}catch(e){countdownResets.delete(c.id);throw e;}}));check.disabled=busy||!active(s.status);attachCountdown(check,c.id,s);row.append(check);
     const disconnect=button('断开连接',()=>perform(async()=>{await rpc({action:'stop',id:c.id});pendingConnection=c.id;message('已请求断开，正在等待后台进程退出。');await refresh();}));disconnect.disabled=busy||!active(s.status);row.append(disconnect);
     row.append(button('编辑',()=>openEditor('connection',c),true));
-    row.append(button('删除',()=>perform(async()=>{if(active(s.status))throw Error('请先断开此连接。');if(confirm(`删除连接“${c.alias}”？`)){data.connections=data.connections.filter(x=>x.id!==c.id);await save();}}),true));body.append(row);if(!active(s.status)){const start=button('初始化连接',()=>perform(async()=>{if(!selected())throw Error('请先选择一个用户。');resetCountdown(c.id);await rpc({action:'connect',id:c.id,namespace:c.namespace,loginName:selected().name});pendingConnection=c.id;message('正在后台建立通道…');await refresh();}));start.disabled=busy||!selected();const startRow=document.createElement('div');startRow.className='row';startRow.append(start);body.append(startRow);}$('connections').append(a);
+    row.append(button('删除',()=>perform(async()=>{if(active(s.status))throw Error('请先断开此连接。');if(confirm(`删除连接“${c.alias}”？`)){data.connections=data.connections.filter(x=>x.id!==c.id);await save();}}),true));body.append(row,gpuPanel(c,s));if(!active(s.status)){const start=button('初始化连接',()=>perform(async()=>{if(!selected())throw Error('请先选择一个用户。');resetCountdown(c.id);await rpc({action:'connect',id:c.id,namespace:c.namespace,loginName:selected().name});pendingConnection=c.id;message('正在后台建立通道…');await refresh();}));start.disabled=busy||!selected();const startRow=document.createElement('div');startRow.className='row';startRow.append(start);body.append(startRow);}$('connections').append(a);
   }
   updateRelativeTimes();
 }
@@ -181,7 +278,8 @@ $('loginForm').onsubmit=e=>{e.preventDefault();const token=$('token').value;cons
     }
     await chrome.storage.local.remove('ais');
     render();await refresh();
-    setInterval(refresh,3000);
+    let lastPoll=0,polling=false;
+    setInterval(async()=>{const period=Object.values(states).some(s=>s.gpu_watching)?1000:3000;if(polling||Date.now()-lastPoll<period)return;polling=true;lastPoll=Date.now();try{await refresh();}finally{polling=false;}},1000);
   }catch(e){
     data={users:[],connections:[]};render();
     document.querySelectorAll('main button, main select').forEach(el=>el.disabled=true);

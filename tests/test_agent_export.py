@@ -28,7 +28,7 @@ class AgentExportTests(unittest.TestCase):
 
     def test_export_tracks_port_rename_failure_delete(self):
         identifier = str(uuid.uuid4())
-        with tempfile.TemporaryDirectory() as folder, patch.object(host,'ROOT',Path(folder)), patch.object(host,'alive',return_value=True):
+        with tempfile.TemporaryDirectory() as folder, patch.object(host,'ROOT',Path(folder)), patch.object(host,'worker_running',return_value=True):
             catalog=[{'id':identifier,'alias':'示例连接','namespace':'workflow_12345678'}]
             path=Path(host.publish_agent_connections(catalog))
             self.assertEqual(json.loads(path.read_text()),{})
@@ -63,6 +63,6 @@ class AgentExportTests(unittest.TestCase):
             with patch.object(host,'alive',return_value=False):
                 host.write_state(identifier,{'pid':1,'status':'connected','verified_at':1,'namespace':'workflow_1','port':1234})
             self.assertEqual(json.loads(path.read_text()),{})
-            with patch.object(host,'alive',return_value=True):
+            with patch.object(host,'worker_running',return_value=True):
                 host.write_state(identifier,{'pid':1,'status':'connected','verified_at':1,'namespace':'workflow_2','port':1234})
             self.assertEqual(json.loads(path.read_text()),{})

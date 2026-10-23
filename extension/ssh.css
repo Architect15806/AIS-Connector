@@ -16,6 +16,20 @@
 .namespace-menu button{display:block;width:100%;text-align:left;background:white;padding:8px 10px}
 .namespace-menu button:hover{background:#eef3ef}
 .connection-meta{margin:3px 0;line-height:1.4}
+.gpu-panel{margin-top:12px;padding:9px 10px;border-radius:8px;background:#f3f6f3;color:#52695a}
+.gpu-panel .gpu-summary{display:flex;align-items:center;gap:6px;width:100%;padding:0;border:0;background:transparent;color:inherit;text-align:left;font-size:12px;line-height:1.6;cursor:pointer}
+.gpu-summary:before{content:'▸';display:inline-block;transition:transform 240ms ease}
+.gpu-panel[data-expanded="true"] .gpu-summary:before{transform:rotate(90deg)}
+.gpu-reveal{display:grid;grid-template-rows:0fr;opacity:0;transition:grid-template-rows 240ms ease,opacity 180ms ease}
+.gpu-panel[data-expanded="true"] .gpu-reveal{grid-template-rows:1fr;opacity:1}
+.gpu-content{min-height:0;overflow:hidden}
+.gpu-scan-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-right:4px}
+.gpu-scan-row .hint{flex:1;min-width:0}
+.gpu-watch{flex:none;padding:3px 9px;font-size:12px;line-height:22px}
+.gpu-watch.watching{background:#a63e43;color:#fff}
+.gpu-watch .countdown-border rect{stroke:#ed999d}
+@media(prefers-reduced-motion:reduce){.gpu-reveal,.gpu-summary:before{transition:none}}
+.gpu-card{padding:5px 0;border-top:1px solid #dce5dd;font-size:12px;white-space:pre-wrap;font-variant-numeric:tabular-nums}
 .current-user{margin:0 0 12px}
 .user-selector{gap:6px;flex-wrap:nowrap}
 .user-selector select{flex:1 1 0;width:0;min-width:0;height:40px;padding:7px 8px}
@@ -47,3 +61,8 @@ body,main,section,.connection-card{min-width:0}
 .state + .connection-meta{margin-top:7px}
 
 .bottom-actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:20px;align-items:center;text-align:center}.bottom-actions button{width:100%;padding:10px 4px}.log-entries{margin-top:16px}.log-entries section{padding:12px}.log-entries code{max-height:260px;overflow:auto}.log-error{font-size:12px;color:#934f39}
+.connection-drag { flex: 0 0 26px; width: 26px; height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; cursor: grab; user-select: none; }
+.connection-drag:active { cursor: grabbing; }
+.connection-card[data-dragging="true"] { opacity: .55; }
+.connection-card[data-drop-position="before"] { box-shadow: 0 -3px 0 #285e4d; }
+.connection-card[data-drop-position="after"] { box-shadow: 0 3px 0 #285e4d; }

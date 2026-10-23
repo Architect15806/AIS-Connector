@@ -68,7 +68,7 @@ class HostTests(unittest.TestCase):
 
     def test_settings_requests_immediate_check_for_active_only(self):
         running,stopped=str(uuid.uuid4()),str(uuid.uuid4())
-        with tempfile.TemporaryDirectory() as folder,patch.object(host,'ROOT',Path(folder)),patch.object(host,'alive',return_value=True):
+        with tempfile.TemporaryDirectory() as folder,patch.object(host,'ROOT',Path(folder)),patch.object(host,'worker_running',return_value=True):
             host.write_state(running,{'status':'connected','pid':1,'verified_at':100})
             host.write_state(stopped,{'status':'stopped'})
             host.dispatch({'action':'settings','interval_minutes':3})
@@ -92,11 +92,14 @@ class HostTests(unittest.TestCase):
 
     def test_ssh_success_requires_remote_command(self):
         with patch.object(host.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, 'test-host\n', '')) as run:
-            self.assertEqual(host.probe_ssh(13903), (True, 'test-host'))
-        self.assertEqual(run.call_args.args[0][-1], 'hostname')
+            good, detail = host.probe_ssh(13903)
+            self.assertTrue(good)
+            self.assertEqual(detail['hostname'], 'test-host')
+            self.assertIn('error', detail['gpu'])
+        self.assertIn('nvidia-smi -q -x', run.call_args.args[0][-1])
 
     def test_old_unverified_state_is_not_connected(self):
-        with tempfile.TemporaryDirectory() as folder, patch.object(host, 'alive', return_value=True):
+        with tempfile.TemporaryDirectory() as folder, patch.object(host, 'worker_running', return_value=True):
             path = Path(folder) / 'state.json'
             path.write_text(json.dumps({'pid':1, 'status':'connected'}))
             self.assertEqual(host.read_state(path)['status'], 'degraded')

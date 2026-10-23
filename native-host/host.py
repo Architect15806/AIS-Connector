@@ -16,6 +16,7 @@ import time
 import uuid
 import sqlite3
 import importlib.util
+import xml.etree.ElementTree as ET
 from contextlib import contextmanager
 
 ROOT = (Path(os.environ.get('LOCALAPPDATA', str(Path.home()))) / 'AISConnector'
@@ -234,9 +235,16 @@ def monitor(identifier, namespace, login, stop, state):
     check = ROOT / (identifier + '.check')
     retry_at = 0
     last_probe = 0
+    watch_due = 0
     try:
         while not stop.exists():
             interval = settings()['interval_minutes'] * 60
+            watching = (ROOT / (identifier + '.watch')).exists()
+            if watching != state.get('gpu_watching', False):
+                state['gpu_watching'] = watching
+                watch_due = 0
+                state['gpu_next_check_at'] = time.time() if watching else None
+                write_state(identifier, state)
             forced = check.exists()
             if forced:
                 check.unlink(missing_ok=True)
@@ -297,6 +305,8 @@ def monitor(identifier, namespace, login, stop, state):
                 state['probe_running'] = True
                 write_state(identifier, state)
                 good, detail = probe_ssh(port)
+                watch_due = last_probe + 2
+                state['gpu_next_check_at'] = time.time() + max(0, watch_due - time.monotonic()) if watching else None
                 state['probe_running'] = False
                 if stop.exists():
                     break
@@ -304,11 +314,30 @@ def monitor(identifier, namespace, login, stop, state):
                     if not verified:
                         state['port_refreshed_at'] = time.time()
                     verified = True
-                    state.update(status='connected', port=port, ssh_command=f'ssh -p {port} 127.0.0.1', verified_at=time.time(), hostname=detail)
+                    scan = detail if isinstance(detail, dict) else {'hostname': detail}
+                    state.update(status='connected', port=port, ssh_command=f'ssh -p {port} 127.0.0.1', verified_at=time.time(), hostname=scan['hostname'])
+                    state['gpu'] = scan.get('gpu', {'error': 'GPU scan unavailable', 'cards': []})
+                    state['gpu']['updated_at'] = time.time()
                     state.pop('error', None)
                     write_state(identifier, state)
                 else:
                     failure = detail
+            elif not failure and port and verified and watching and time.monotonic() >= watch_due:
+                scan_started = time.monotonic()
+                state['gpu_scan_running'] = True
+                state['gpu_next_check_at'] = None
+                write_state(identifier, state)
+                good, detail = probe_ssh(port)
+                state['gpu_scan_running'] = False
+                # Do not start overlapping SSH requests if the remote scan is slow.
+                watch_due = scan_started + 2
+                state['gpu_next_check_at'] = time.time() + max(0, watch_due - time.monotonic())
+                if stop.exists():
+                    break
+                state['gpu'] = (detail.get('gpu', {'cards': [], 'error': '显卡扫描不可用'})
+                                if good and isinstance(detail, dict) else {'cards': [], 'error': clean(str(detail))})
+                state['gpu']['updated_at'] = time.time()
+                write_state(identifier, state)
             if failure:
                 state.update(status='reconnecting', error=failure)
                 state.pop('ssh_command', None)
@@ -326,21 +355,94 @@ def monitor(identifier, namespace, login, stop, state):
     finally:
         close_tunnel(process)
         check.unlink(missing_ok=True)
+        (ROOT / (identifier + '.watch')).unlink(missing_ok=True)
+        state.update(gpu_watching=False, gpu_scan_running=False, gpu_next_check_at=None)
+
+GPU_MARKER = '__AIS_GPU_SCAN__'
+SSH_SCAN = "hostname && printf '\\n__AIS_GPU_SCAN__\\n'; if command -v timeout >/dev/null 2>&1; then timeout 5s nvidia-smi -q -x 2>/dev/null; fi; exit 0"
+
+def parse_gpu(output):
+    try:
+        root = ET.fromstring(output.strip())
+        cards = []
+        for gpu in root.findall('gpu'):
+            def number(path):
+                value = gpu.findtext(path, '')
+                match = re.fullmatch(r'\s*(\d+(?:\.\d+)?)\s*(?:MiB|%)?\s*', value)
+                return float(match[1]) if match else None
+            utilization = number('utilization/gpu_util')
+            processes = gpu.find('processes')
+            processes_known = processes is not None and (processes.text or '').strip() in ('', 'None')
+            count = len(processes.findall('process_info')) if processes is not None else 0
+            used = number('fb_memory_usage/used')
+            if utilization is not None and utilization > 0:
+                status = 'busy'
+            elif not processes_known:
+                status = 'unknown'
+            elif count == 0:
+                status = 'idle'
+            elif utilization == 0 and used is not None and used > 0:
+                status = 'spinning'
+            else:
+                status = 'unknown'
+            cards.append({'index': len(cards), 'name': gpu.findtext('product_name', 'Unknown GPU'),
+                          'memory_used': used, 'memory_total': number('fb_memory_usage/total'),
+                          'utilization': utilization, 'status': status})
+        return {'cards': cards} if cards else {'cards': [], 'error': '未检测到可见 GPU'}
+    except (ET.ParseError, ValueError):
+        return {'cards': [], 'error': '显卡扫描不可用：nvidia-smi 缺失、超时或返回格式异常'}
+
+def ssh_diagnostic(stderr, timed_out=False):
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode('utf-8', errors='replace')
+    stderr = stderr or ''
+    if 'Authenticated to ' in stderr:
+        stage = '远端命令执行'
+    elif 'Remote protocol version' in stderr:
+        stage = 'SSH 密钥交换或认证'
+    elif 'Connection established' in stderr:
+        stage = 'SSH 握手（本地 TCP 已连接）'
+    else:
+        stage = 'SSH 连接建立'
+    # Keep only bounded, sanitized diagnostics, never raw stdout.
+    tail = clean('\n'.join(stderr.splitlines()[-6:]))[-1200:]
+    return stage + ('超时' if timed_out else '失败') + ('：' + tail if tail else '')
+
+
+def ssh_run(port, command, timeout=16):
+    return subprocess.run([shutil.which('ssh.exe') or 'ssh', '-v', '-p', str(port),
+        '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=6',
+        '-o', 'ConnectionAttempts=1', '-o', 'StrictHostKeyChecking=accept-new',
+        '127.0.0.1', command], stdin=subprocess.DEVNULL, capture_output=True,
+        encoding='utf-8', errors='replace', timeout=timeout, creationflags=NO_WINDOW)
+
+
+def scan_gpu(port):
+    try:
+        result = ssh_run(port, "if command -v timeout >/dev/null 2>&1; then timeout 5s nvidia-smi -q -x; else nvidia-smi -q -x; fi")
+        if result.returncode:
+            return {'cards': [], 'error': 'GPU 扫描：' + ssh_diagnostic(result.stderr)}
+        return parse_gpu(result.stdout)
+    except subprocess.TimeoutExpired as exc:
+        return {'cards': [], 'error': 'GPU 扫描：' + ssh_diagnostic(exc.stderr, True)}
+    except OSError as exc:
+        return {'cards': [], 'error': 'GPU 扫描：' + clean(str(exc))}
+
 
 def probe_ssh(port):
     try:
-        result = subprocess.run([shutil.which('ssh.exe') or 'ssh', '-p', str(port),
-            '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=6',
-            '-o', 'ConnectionAttempts=1', '-o', 'StrictHostKeyChecking=accept-new',
-            '127.0.0.1', 'hostname'], stdin=subprocess.DEVNULL, capture_output=True,
-            encoding='utf-8', errors='replace', timeout=10, creationflags=NO_WINDOW)
-        if result.returncode == 0:
-            return True, result.stdout.strip()
-        return False, clean(result.stderr or 'SSH 验证失败')
-    except subprocess.TimeoutExpired:
-        return False, 'SSH 验证超时：本地端口已监听，但远端 SSH 没有正常响应。'
+        result = ssh_run(port, 'hostname')
+        if result.returncode:
+            return False, ssh_diagnostic(result.stderr)
+        hostname = result.stdout.strip()
+        if not hostname:
+            return False, '远端 hostname 命令未返回主机名'
+    except subprocess.TimeoutExpired as exc:
+        return False, ssh_diagnostic(exc.stderr, True)
     except OSError as exc:
-        return False, clean(str(exc))
+        return False, '本地 SSH 启动失败：' + clean(str(exc))
+    # GPU failures must never invalidate a successful SSH health check.
+    return True, {'hostname': hostname, 'gpu': scan_gpu(port)}
 
 def environment(login):
     env = os.environ.copy()
@@ -417,13 +519,41 @@ def alive(pid):
     finally:
         kernel.CloseHandle(handle)
 
+def worker_running(path, data):
+    """A PID can be reused. A live supervisor must also hold its connection lock."""
+    if not alive(data.get('pid')):
+        return False
+    try:
+        with path.with_suffix('.lock').open('r+b') as lock:
+            if os.name == 'nt':
+                import msvcrt
+                try:
+                    msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+                except OSError as exc:
+                    import errno
+                    if exc.errno in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                        return True
+                    raise
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                try:
+                    fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    return True
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        return False
+    return False
+
 def read_state(path):
     try:
         data = json.loads(path.read_text(encoding='utf-8'))
         data.setdefault('updated_at', path.stat().st_mtime)
-        if data['status'] in ACTIVE and not alive(data.get('pid')):
+        if data['status'] in ACTIVE and not worker_running(path, data):
             data.update(status='error', error='后台进程已退出，请重新初始化连接。')
             data.pop('ssh_command', None)
+            data.pop('verified_at', None)
         elif data['status'] == 'connected' and not data.get('verified_at'):
             data.update(status='degraded', error='旧版连接未验证 SSH，请断开后重新初始化。')
         return data
@@ -446,7 +576,8 @@ def worker(identifier, namespace, login):
         return
     stop = ROOT / (identifier + '.stop')
     stop.unlink(missing_ok=True)
-    state = {'pid': os.getpid(), 'status': 'connecting', 'namespace': namespace, 'loginName': login, 'monitor_version': 2}
+    (ROOT / (identifier + '.watch')).unlink(missing_ok=True)
+    state = {'pid': os.getpid(), 'status': 'connecting', 'namespace': namespace, 'loginName': login, 'monitor_version': 3}
     write_state(identifier, state)
     process = None
     try:
@@ -485,6 +616,21 @@ def dispatch(request):
 def dispatch_request(request):
     action = request.get('action')
     ROOT.mkdir(parents=True, exist_ok=True)
+    if action == 'gpu_watch':
+        identifier = validate_id(request['id'])
+        enabled = request.get('enabled')
+        if not isinstance(enabled, bool):
+            raise ValueError('Invalid watch setting')
+        current = read_state(state_path(identifier))
+        if enabled and (current.get('monitor_version', 0) < 3 or current.get('status') != 'connected'):
+            raise ValueError('请先断开并重新初始化连接以加载注视功能，并等待 SSH 连接成功。')
+        path = ROOT / (identifier + '.watch')
+        if enabled:
+            path.touch()
+        else:
+            path.unlink(missing_ok=True)
+        log_event('gpu.watch_enabled' if enabled else 'gpu.watch_disabled', id=identifier)
+        return {}
     if action == 'vpn_diagnose':
         spec = importlib.util.spec_from_file_location('ais_vpn', Path(__file__).with_name('vpn.py'))
         module = importlib.util.module_from_spec(spec)
@@ -522,7 +668,7 @@ def dispatch_request(request):
         current = read_state(state_path(identifier))
         if current.get('status') not in ACTIVE:
             raise ValueError('连接未运行，请先初始化连接。')
-        if current.get('monitor_version') != 2:
+        if current.get('monitor_version') not in (2, 3):
             raise ValueError('此连接由旧版后台维护，请断开后重新初始化以启用定时检测。')
         (ROOT / (identifier + '.check')).touch()
         return {}
