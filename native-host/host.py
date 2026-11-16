@@ -445,8 +445,14 @@ def probe_ssh(port):
     # GPU failures must never invalidate a successful SSH health check.
     return True, {'hostname': hostname, 'gpu': scan_gpu(port)}
 
-def environment(login):
+def environment(login, *, ignore_http_proxy=False):
     env = os.environ.copy()
+    if ignore_http_proxy:
+        # Only sanitize the child environment. Keep OS routing/VPN and the
+        # parent process untouched, including on case-sensitive platforms.
+        for key in list(env):
+            if key.lower() in ('http_proxy', 'https_proxy', 'all_proxy'):
+                env.pop(key)
     for key in ('SEASTAR_TOKEN', 'SEASTAR_TOKEN_NAME', 'SEASTAR_KEYRING_TYPE'):
         env.pop(key, None)
     env['PATH'] = str(SSCTL.parent) + os.pathsep + env.get('PATH', '')
@@ -460,7 +466,7 @@ def start_tunnel_process(namespace, login):
     # Keep this pipe open for the full tunnel lifetime; do not call communicate().
     return subprocess.Popen(
         [str(SSCTL), 'connect', '-service-type', 'ssh', '-ais_exp_namespace',
-         namespace, '-container-name', 'main'], env=environment(login),
+         namespace, '-container-name', 'main'], env=environment(login, ignore_http_proxy=True),
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         creationflags=NO_WINDOW, **({'start_new_session': True} if os.name != 'nt' else {}))
 
