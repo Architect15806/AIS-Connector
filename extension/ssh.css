@@ -66,3 +66,8 @@ body,main,section,.connection-card{min-width:0}
 .connection-card[data-dragging="true"] { opacity: .55; }
 .connection-card[data-drop-position="before"] { box-shadow: 0 -3px 0 #285e4d; }
 .connection-card[data-drop-position="after"] { box-shadow: 0 3px 0 #285e4d; }
+.connection-heading{flex-wrap:wrap;gap:10px}
+.connection-heading-actions{flex-wrap:wrap;justify-content:flex-end;max-width:100%}
+.connection-heading-actions button{white-space:nowrap}
+.connection-heading-actions .batch-icon{width:32px;height:32px;min-width:32px;padding:0;display:inline-flex;align-items:center;justify-content:center}
+.batch-icon svg{display:block;flex:none;pointer-events:none}

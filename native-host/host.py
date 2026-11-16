@@ -145,7 +145,7 @@ def publish_agent_connections(catalog=None):
             namespace = entry.get('namespace', '')
             if not alias or len(alias) > 120 or alias in names or identifier in ids:
                 raise ValueError('连接别名必须唯一且非空，请修改重复别名。')
-            if not re.fullmatch(r'workflow_\d+', namespace):
+            if not re.fullmatch(r'(?:workflow_[0-9]+|experiment_[0-9]+_[0-9]+)', namespace):
                 raise ValueError('Invalid namespace')
             names.add(alias)
             ids.add(identifier)
@@ -188,10 +188,11 @@ def profile_data(value):
     for connection in value.get('connections', []):
         namespace = connection.get('namespace', '')
         alias = connection.get('alias', '').strip()
-        if not re.fullmatch(r'workflow_\d+', namespace) or not alias or len(alias) > 120:
+        if not re.fullmatch(r'(?:workflow_[0-9]+|experiment_[0-9]+_[0-9]+)', namespace) or not alias or len(alias) > 120:
             raise ValueError('Invalid connection')
         connections.append({'id': validate_id(connection['id']), 'alias': alias,
-                            'namespace': namespace, 'createdAt': connection.get('createdAt')})
+                            'namespace': namespace, 'createdAt': connection.get('createdAt'),
+                            'enabled': connection.get('enabled') is not False})
     if len({c['alias'] for c in connections}) != len(connections):
         raise ValueError('Duplicate connection alias')
     selected = value.get('selected')
@@ -700,7 +701,7 @@ def dispatch_request(request):
         return {}
     identifier = validate_id(request['id'])
     namespace = request.get('namespace', '')
-    if not re.fullmatch(r'workflow_\d+', namespace):
+    if not re.fullmatch(r'(?:workflow_[0-9]+|experiment_[0-9]+_[0-9]+)', namespace):
         raise ValueError('Invalid namespace')
     current = read_state(state_path(identifier))
     if current.get('status') in ACTIVE:

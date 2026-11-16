@@ -11,6 +11,12 @@ host = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(host)
 
 class ProfileTests(unittest.TestCase):
+    def test_connection_enabled_persists_and_defaults_true(self):
+        connection={'id':str(uuid.uuid4()),'alias':'test','namespace':'workflow_123'}
+        profile={'users':[],'connections':[connection]}
+        self.assertTrue(host.profile_data(profile)['connections'][0]['enabled'])
+        connection['enabled']=False
+        self.assertFalse(host.profile_data(profile)['connections'][0]['enabled'])
     def test_migration_is_durable_idempotent_and_excludes_secrets(self):
         with tempfile.TemporaryDirectory() as folder, patch.object(host, 'ROOT', Path(folder)):
             uid, cid = str(uuid.uuid4()), str(uuid.uuid4())

@@ -1,6 +1,18 @@
 const $ = id => document.getElementById(id);
+function setBatchIcon(id,label,paths){
+  const button=$(id);button.textContent='';button.title=label;
+  button.setAttribute('aria-label',label);button.classList.add('batch-icon');
+  const ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg');
+  for(const [key,value] of Object.entries({viewBox:'0 0 24 24',width:'18',height:'18',fill:'none',stroke:'currentColor','stroke-width':'1.8','stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true',focusable:'false'}))svg.setAttribute(key,value);
+  for(const d of paths){const path=document.createElementNS(ns,'path');path.setAttribute('d',d);svg.append(path);}
+  button.append(svg);
+}
+setBatchIcon('initializeAll','全部初始化',['M8 5l11 7-11 7V5Z']);
+setBatchIcon('disconnectAll','全部断开',['M9 15l-1 1a4.24 4.24 0 0 1-6-6l3-3a4.24 4.24 0 0 1 6 0','M15 9l1-1a4.24 4.24 0 0 1 6 6l-3 3a4.24 4.24 0 0 1-6 0','M8 2v3','M2 8h3','M16 19v3','M19 16h3']);
+setBatchIcon('refreshAll','全部刷新',['M20 7v5h-5','M4 17v-5h5','M6.1 6.1A8 8 0 0 1 19.5 9L20 12','M4 12l.5 3A8 8 0 0 0 17.9 17.9']);
 let data, states = {}, editing, busy = false;
 let pendingConnection = null;
+const enabled = c => c.enabled !== false;
 let openNamespaceId = null;
 let draggedConnectionId = null;
 async function reorderConnection(sourceId, targetId, after=false){
@@ -166,7 +178,7 @@ document.addEventListener('click',e=>{if(!e.target.closest('.namespace-actions')
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){const toggle=document.querySelector('.namespace-toggle[aria-expanded="true"]');closeNamespaceMenu();toggle?.focus();}});
 setInterval(updateRelativeTimes,1000);
 $('refreshAll').onclick=()=>perform(async()=>{
-  const targets=data.connections.filter(c=>active(states[c.id]?.status));
+  const targets=data.connections.filter(c=>enabled(c)&&active(states[c.id]?.status));
   for(const c of targets)countdownResets.set(c.id,Date.now()/1000);
   render();
   const results=await Promise.allSettled(targets.map(async c=>{
@@ -178,16 +190,40 @@ $('refreshAll').onclick=()=>perform(async()=>{
 });
 
 function updateFoldAll(){
-  const allClosed=data.connections.every(c=>!expandedConnections.has(c.id));
+  const allClosed=data.connections.filter(enabled).every(c=>!expandedConnections.has(c.id));
   const control=$('toggleAll');
-  control.disabled=!data.connections.length;
+  control.disabled=busy||!data.connections.some(enabled);
   control.textContent=allClosed?'▸':'▾';
   control.title=allClosed?'全部展开':'全部折叠';
   control.setAttribute('aria-label',control.title);
 }
+async function batchConnections(disconnect){
+  if(busy)return;
+  const user=selected();
+  if(!disconnect&&!user){message('请先选择一个用户。',true);return;}
+  await perform(async()=>{
+    // Check live state before selecting targets; never rebuild healthy tunnels.
+    const current=await rpc({action:'status'});
+    states=current.connections;
+    const targets=data.connections.filter(c=>enabled(c)&&(disconnect?active(states[c.id]?.status):!active(states[c.id]?.status)));
+    if(!targets.length){message(disconnect?'没有运行中的连接。':'所有连接均已运行，无需初始化。');return;}
+    if(disconnect&&!confirm(`确定断开全部 ${targets.length} 个运行中的连接？现有 SSH 会话会中断。`))return;
+    const failures=[];
+    for(const c of targets){
+      try{
+        await rpc(disconnect?{action:'stop',id:c.id}:{action:'connect',id:c.id,namespace:c.namespace,loginName:user.name});
+        if(!disconnect)countdownResets.set(c.id,Date.now()/1000);
+      }catch(e){failures.push(`${c.alias}：${e.message}`);}
+    }
+    await refresh();
+    message(`已请求${disconnect?'断开':'初始化'} ${targets.length-failures.length} 个连接，实际结果请查看各连接状态。`+(failures.length?' 失败：'+failures.join('；'):''),failures.length>0);
+  });
+}
+$('initializeAll').onclick=()=>batchConnections(false);
+$('disconnectAll').onclick=()=>batchConnections(true);
 $('toggleAll').onclick=()=>{
-  const allClosed=data.connections.every(c=>!expandedConnections.has(c.id));
-  for(const c of data.connections){
+  const allClosed=data.connections.filter(enabled).every(c=>!expandedConnections.has(c.id));
+  for(const c of data.connections.filter(enabled)){
     if(expandedConnections.has(c.id)!==allClosed)document.getElementById('fold-'+c.id)?.click();
   }
   updateFoldAll();
@@ -196,7 +232,9 @@ function render(){
   if(draggedConnectionId)return;
   if(foldAnimationTimer!==null){renderAfterFold=true;return;}
   updateFoldAll();
-  $('refreshAll').disabled=busy||!data.connections.some(c=>active(states[c.id]?.status));
+  $('refreshAll').disabled=busy||!data.connections.some(c=>enabled(c)&&active(states[c.id]?.status));
+  $('initializeAll').disabled=busy||!selected()||!data.connections.some(c=>enabled(c)&&!active(states[c.id]?.status));
+  $('disconnectAll').disabled=busy||!data.connections.some(c=>enabled(c)&&active(states[c.id]?.status));
   $('users').replaceChildren(...data.users.map(u=>{const o=document.createElement('option');o.value=u.id;o.textContent=u.name;return o;}));$('users').value=data.selected||'';
   $('login').disabled=busy||!selected();$('deleteUser').disabled=busy||!selected();$('addConnection').disabled=busy;$('addUser').disabled=busy;$('users').disabled=busy;
   const auth=selected()?.auth;
@@ -208,8 +246,17 @@ function render(){
   for(const c of connections){const s=states[c.id]||{};const a=document.createElement('article');const collapsed=!expandedConnections.has(c.id);a.className=collapsed?'connection-card collapsed':'connection-card';const body=document.createElement('div');body.className='connection-body';body.id='connection-body-'+c.id;body.inert=collapsed;const reveal=document.createElement('div');reveal.className='connection-reveal';reveal.append(body);const st=document.createElement('div');st.className='state';st.textContent=({connected:'● 已连接 · SSH 验证通过',connecting:'◌ 正在建立通道…',checking:'◌ 正在验证 SSH…',degraded:'⚠ SSH 不可用',error:'连接失败',stopped:'未连接'})[s.status]||'未连接';
     const nameRow=document.createElement('div');nameRow.className='connection-name-row';
     attachConnectionDrag(a,nameRow,c);
-    const copyName=button(c.alias,()=>copyText(c.alias),true);
-    copyName.classList.add('connection-title');copyName.disabled=false;copyName.title='点击复制连接名称';
+    const copyName=button(c.alias,()=>perform(async()=>{
+      const previous=c.enabled;c.enabled=!enabled(c);
+      try{await rpc({action:'profile_save',profile:data});}
+      catch(error){c.enabled=previous;throw error;}
+      closeNamespaceMenu();
+    }),!enabled(c));
+    copyName.classList.add('connection-title');
+    copyName.setAttribute('aria-pressed',String(enabled(c)));
+    copyName.title='左键启用/停用；右键复制名称（停用不主动断开后台通道）';
+    copyName.oncontextmenu=e=>{e.preventDefault();return copyText(c.alias);};
+    if(!enabled(c)){nameRow.append(copyName);a.append(nameRow);$('connections').append(a);continue;}
     const actions=document.createElement('div');actions.className='namespace-actions';
     const digits=/^workflow_(\d+)$/.exec(c.namespace)?.[1];
     const toggle=button(digits||c.namespace,()=>{const show=menu.hidden;closeNamespaceMenu();if(show){openNamespaceId=c.id;menu.hidden=false;toggle.setAttribute('aria-expanded','true');}},true);
